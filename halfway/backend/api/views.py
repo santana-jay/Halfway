@@ -2,12 +2,12 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 import googlemaps
-import google.generativeai as gemini
 from google import genai
 from django.conf import settings
 import json
 from django.http import HttpResponse, JsonResponse
 import logging
+import re
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -35,17 +35,28 @@ class MidpointView(APIView):
 
 class MidpointView(APIView):
     def post(self, request):
-        print("Received request:", request.data)
+        logger.info(f"Received request: {request.data}")
 
         # Get address from request
         try:
             address1 = request.data.get('address1')
             address2 = request.data.get('address2')
+            radius = request.data.get('radius', 5)
+
+            try:
+                radius = int(radius)
+                if radius < 1:
+                    radius = 5
+                elif radius > 20:
+                    radius = 20
+            except (ValueError, TypeError):
+                radius = 5
+
 
             if not address1 or not address2:
                 return Response({"error": "Both address1 and address2 are required."}, status=status.HTTP_400_BAD_REQUEST)
             
-            logger.info(f"Processing addresses: {address1}, {address2}")
+            logger.info(f"Processing addresses: {address1} and {address2} with radius: {radius} miles")
             
             # Initialize Google Maps client
             gmaps = googlemaps.Client(key=settings.GOOGLE_MAPS_API_KEY)
@@ -81,50 +92,83 @@ class MidpointView(APIView):
                 midpoint_address = "Unknown address. Lookup Failed."
 
 
-            # Get suggestions from Google Generative AI
-            # gemini.configure(key=settings.GOOGLE_GEMINI_API_KEY)
-            # model = gemini.GenerativeModel('gemini-pro')
+            try:
+                places_result = gmaps.places_nearby(
+                    location=(mid_lat, mid_lng),
+                    radius=radius * 1069.34,
+                    type='point_of_interest',
+                    keyword='restaurant|cafe|park|attraction'
+                )
+
+                logger.info(f'Found {len(places_result.get('results', []))} nearby places.')
+
+                if places_result and 'results' in places_result and len(places_result['results']) > 0:
+                    places = places_result['results'][:10]
+                    real_places = []
+
+                    for place in places:
+                        place_type = place.get('types', ['unknown'])[0].replace('_', ' ')
+                        real_places.append({
+                            'name': place.get('name', 'Unknown Place'),
+                            'description': place.get('vicinity', 'No description available'),
+                            'type': place_type
+                        })
+
+                    if real_places:
+                        logger.info('Using real places from Google Places API.')
+                        return Response({
+                            'midpoint': {
+                                'lat': mid_lat,
+                                'lng': mid_lng,
+                                'address': midpoint_address
+                            },
+                            'suggestions': real_places
+                        }, 
+                        status=status.HTTP_200_OK
+                        )
+            except Exception as e:
+                logger.error(f'Places API Error: {str(e)}')
+
+
 
             client = genai.Client(api_key=settings.GOOGLE_GEMINI_API_KEY)
-            # model = client.get_model('gemini-pro')
+                
 
-            # Create a prompt for the model
+                # Create a prompt for the model
             prompt = """
-                I'm meeting a friend halfway between """ + address1 + """ and """ + address2 + """.
-                The midpoint is at """ + midpoint_address + """ (latitude: """ + str(mid_lat) + """, longitude: """ + str(mid_lng) + """).
-                Please suggest 10 interesting things to do in this area. Include a mix of activities, such as restaurants or cafes, parks, and attractions.
-                Respond in a JSON format with an array of objects that have name, description, and type properties.
-                Each object should represent a different suggestion.
-                Example:
-                [
-                    {
-                        "name": "Central Park",
-                        "description": "A large public park in New York City.",
-                        "type": "park"
-                    },
-                    {
-                        "name": "The Coffee Shop",
-                        "description": "A cozy cafe offering specialty coffees and pastries.",
-                        "type": "cafe"
-                    }
-                ]
-                """
+            I need recommendations for things to do near a specific location. Please provide specific, realistic recommendations that would actually exist in this area. 
+            
+            Location: """ + midpoint_address + """
+            Coordinates: Latitude """ + str(mid_lat) + """, Longitude """ + str(mid_lng) + """
+            Radius: """ + str(radius) + """ miles
+            
+            Please suggest 10-12 interesting, diverse things to do in this area. Include a mix of:
+            - Parks and outdoor activities
+            - Shopping areas or malls
+            - Entertainment venues
+            - Cultural attractions
+            - Local landmarks
+            
+            Be specific and realistic - these should be actual places that are likely to exist in this area. Must include a minimum of 5 activities like parks, attractions or entertainment venues. There must be a mix of activities.
+            For each suggestion, provide:
+            1. A name (realistic for the location)
+            2. A brief, helpful description (1-2 sentences)
+            3. A category/type (e.g., restaurant, park, museum)
+            
+            Format your response as a JSON array with this exact structure:
+            [
+                {
+                    "name": "Place Name",
+                    "description": "Brief description of this place.",
+                    "type": "category"
+                },
+                ...
+            ]
+            
+            Only respond with the JSON array, nothing else.
+            """
             
 
-            # response = model.generate_content(prompt)
-            # suggestions = json.loads(response.text)
-            # if not isinstance(suggestions, list):
-            #     return Response({"error": "Failed to get suggestions."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-            
-            # # Return the midpoint and suggestions
-            # return Response({
-            #     "midpoint": {
-            #     "latitude": mid_lat,
-            #     "longitude": mid_lng,
-            #     "address": midpoint_address
-            #     },
-            #     "suggestions": suggestions
-            # }, status=status.HTTP_200_OK)
 
             try:
                 response = client.models.generate_content(
@@ -138,30 +182,91 @@ class MidpointView(APIView):
                 response_text = response.text
                 
                 # Look for JSON in the response
-                import re
-                json_match = re.search(r'\[.*\]', response_text, re.DOTALL)
+                
+                json_match = re.search(r'\[\s*\{.*\}\s*\]', response_text, re.DOTALL)
                 
                 if json_match:
                     json_str = json_match.group(0)
-                    suggestions = json.loads(json_str)
-                else:
-                    # If no JSON array is found, create a basic suggestion
-                    suggestions = [
-                        {
-                            "name": "Explore the Area",
-                            "description": f"Check out what's available around {midpoint_address}.",
-                            "type": "general"
-                        }
-                    ]
-                    
-                if not isinstance(suggestions, list):
-                    suggestions = [
-                        {
-                            "name": "Explore the Area",
-                            "description": f"Check out what's available around {midpoint_address}.",
-                            "type": "general"
-                        }
-                    ]
+                    try:
+                        logger.info((f'Found JSON: {json_str[:100]}...'))
+                        suggestions = json.loads(json_str)
+                        if isinstance(suggestions, list) and len(suggestions) > 0:
+                            logger.info(f'Successfully parsed JSON {len(suggestions)} suggestions.')
+
+                            return Response({
+                                "midpoint": {
+                                    "lat": mid_lat,
+                                    "lng": mid_lng,
+                                    "address": midpoint_address
+                                },
+                                "suggestions": suggestions
+                            }, status=status.HTTP_200_OK)
+                    except json.JSONDecodeError as e:
+                        logger.error(f"JSON Decode Error: {str(e)}")
+
+                logger.warning("No valid JSON found in the response. Using default suggestions. views.py ln 209")
+
+                city_name = ''
+
+                for component in reverse_geocode[0].get('address_components', []):
+                    if 'locality' in component.get['types', []]:
+                        city_name = component.get['long_name', '']
+                        break
+
+                if not city_name:
+                    for component in reverse_geocode[0].get('address_components', []):
+                        if 'administrative_area_level_1' in component.get['types', []]:
+                            city_name = component.get('long_name', '')
+                            break
+
+                if not city_name:
+                    city_name = midpoint_address.split(',')[0]
+                        
+                
+                suggestions = [
+                    {
+                        "name": f"{city_name} Park",
+                        "description": f"A local park in {city_name} with walking trails and picnic areas.",
+                        "type": "park"
+                    },
+                    {
+                        "name": f"{city_name} Cafe",
+                        "description": "A cozy cafe serving coffee, pastries and light meals.",
+                        "type": "cafe"
+                    },
+                    {
+                        "name": f"{city_name} Mall",
+                        "description": f"Shopping center with various retail stores in {city_name}.",
+                        "type": "shopping"
+                    },
+                    {
+                        "name": "Local Diner",
+                        "description": "Classic American diner serving breakfast and lunch.",
+                        "type": "restaurant"
+                    },
+                    {
+                        "name": f"{city_name} Museum",
+                        "description": f"Museum showcasing the history and culture of {city_name}.",
+                        "type": "museum"
+                    },
+                    {
+                        "name": "Movie Theater",
+                        "description": "Cinema showing the latest releases.",
+                        "type": "entertainment"
+                    },
+                    {
+                        "name": "Public Library",
+                        "description": "Community library with books and quiet study spaces.",
+                        "type": "education"
+                    },
+                    {
+                        "name": f"{city_name} Golf Course",
+                        "description": "18-hole golf course with clubhouse and restaurant.",
+                        "type": "sports"
+                    }
+                ]
+                
+        
             
             except Exception as e:
                     logger.error(f"Gemini API error: {str(e)}")
@@ -169,12 +274,32 @@ class MidpointView(APIView):
                     
                     # Provide default suggestions if Gemini fails
                     suggestions = [
-                        {
-                            "name": "Explore the Area",
-                            "description": f"Check out what's available around {midpoint_address}.",
-                            "type": "general"
-                        }
-                    ]
+                    {
+                        "name": "Explore the Area",
+                        "description": f"Check out what's available around {midpoint_address}.",
+                        "type": "general"
+                    },
+                    {
+                        "name": "Local Restaurant",
+                        "description": "Find a nearby restaurant to enjoy a meal.",
+                        "type": "restaurant"
+                    },
+                    {
+                        "name": "Coffee Break",
+                        "description": "Take a coffee break at a local cafe.",
+                        "type": "cafe"
+                    },
+                    {
+                        "name": "Parks and Recreation",
+                        "description": "Visit a nearby park or recreation area.",
+                        "type": "outdoor"
+                    },
+                    {
+                        "name": "Shopping",
+                        "description": "Check out local shops and boutiques.",
+                        "type": "shopping"
+                    }
+                ]
                 
             # Return the midpoint and suggestions
             return Response({
