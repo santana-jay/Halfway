@@ -82,25 +82,34 @@ class MidpointView(APIView):
 
 
             # Get suggestions from Google Generative AI
-            gemini.configure(key=settings.GOOGLE_GEMINI_API_KEY)
-            model = gemini.GenerativeModel('gemini-pro')
+            # gemini.configure(key=settings.GOOGLE_GEMINI_API_KEY)
+            # model = gemini.GenerativeModel('gemini-pro')
 
-            prompt = f"""
-            I'm meeting a friend halfway between {address1} and {address2}.
-            The midpoint is at {midpoint_address} (latitude: {mid_lat}, longitude: {mid_lng}).
-            Please suggest 10 interesting things to do in this area. Include a mix of activities, such as restaurants or cafes, parks, and attractions.
-            Respond in a JSON format with an array of objects that have name, description, and type properties.
-            Each object should represent a different suggestion.
-            Example:
-            [
-                {
-                    "name": "Central Park",
-                    "description": "A large public park in New York City.",
-                    "type": "park"
-                },
-                ...
-            ]
-            """
+            client = genai.Client(api_key=settings.GOOGLE_GEMINI_API_KEY)
+            # model = client.get_model('gemini-pro')
+
+            # Create a prompt for the model
+            prompt = """
+                I'm meeting a friend halfway between """ + address1 + """ and """ + address2 + """.
+                The midpoint is at """ + midpoint_address + """ (latitude: """ + str(mid_lat) + """, longitude: """ + str(mid_lng) + """).
+                Please suggest 10 interesting things to do in this area. Include a mix of activities, such as restaurants or cafes, parks, and attractions.
+                Respond in a JSON format with an array of objects that have name, description, and type properties.
+                Each object should represent a different suggestion.
+                Example:
+                [
+                    {
+                        "name": "Central Park",
+                        "description": "A large public park in New York City.",
+                        "type": "park"
+                    },
+                    {
+                        "name": "The Coffee Shop",
+                        "description": "A cozy cafe offering specialty coffees and pastries.",
+                        "type": "cafe"
+                    }
+                ]
+                """
+            
 
             # response = model.generate_content(prompt)
             # suggestions = json.loads(response.text)
@@ -118,7 +127,11 @@ class MidpointView(APIView):
             # }, status=status.HTTP_200_OK)
 
             try:
-                response = model.generate_content(prompt)
+                response = client.models.generate_content(
+                    model='gemini-pro',
+                    contents=prompt
+                    )
+                
                 
                 # Extract the JSON string from the response text
                 # First, let's handle the response properly
