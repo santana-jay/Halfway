@@ -2,9 +2,15 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 import googlemaps
-import google.generativeai as genai
+import google.generativeai as gemini
+from google import genai
 from django.conf import settings
 import json
+from django.http import HttpResponse, JsonResponse
+
+
+def index(request):
+    return JsonResponse({'message': 'Halfway API is running!'})
 
 
 class MidpointView(APIView):
@@ -20,7 +26,7 @@ class MidpointView(APIView):
 
         # Geocode the addresses
         geocode1 = gmaps.geocode(address1)
-        geocode2 = gmaps.geocide(address2)
+        geocode2 = gmaps.geocode(address2)
         if not geocode1 or not geocode2:
             return Response({"error": "Could not geocode one or both addresses."}, status=status.HTTP_400_BAD_REQUEST)
         
@@ -40,8 +46,8 @@ class MidpointView(APIView):
         midpoint_address = reverse_geocode[0]['formatted_address'] if reverse_geocode else "Unknown address"
 
         # Get suggestions from Google Generative AI
-        genai.configure(aoi_key=settings.GOOGLE_GEMINI_API_KEY)
-        model = genai.GenerativeModel('gemini-pro')
+        gemini.configure(api_key=settings.GOOGLE_GEMINI_API_KEY)
+        model = gemini.GenerativeModel('gemini-pro')
 
         prompt = f"""
         I'm meeting a friend halfway between {address1} and {address2}.
@@ -60,7 +66,7 @@ class MidpointView(APIView):
         ]
         """
 
-        response = model.generate(prompt)
+        response = model.generate_content(prompt)
         suggestions = json.loads(response.text)
         if not isinstance(suggestions, list):
             return Response({"error": "Failed to get suggestions."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

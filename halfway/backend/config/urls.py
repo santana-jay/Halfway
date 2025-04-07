@@ -17,8 +17,13 @@ Including another URLconf
 
 from django.contrib import admin
 from django.urls import path, include
+from django.http import HttpResponse
+
+def root_view(request):
+    return HttpResponse("<h1>Welcome to Halfway</h1><p>Access the API at <a href='/api/'>/api/</a></p><p>Access the admin at <a href='/admin/'>/admin/</a></p>")
 
 urlpatterns = [
+    path("", root_view, name="root"),
     path("admin/", admin.site.urls),
     path("api/", include("api.urls")),
 ]
