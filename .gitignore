@@ -25,6 +25,14 @@ frontend/npm-debug.log*
 frontend/yarn-debug.log*
 frontend/yarn-error.log*
 
+.env
+.env.local
+.env.development
+.env.test
+.env.production
+*/backend/.env
+*/frontend/.env
+
 # IDE
 .idea/
 .vscode/
