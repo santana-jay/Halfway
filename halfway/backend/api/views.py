@@ -1,7 +1,7 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
-import googlemaps
+import googlemaps  #type: ignore
 from google import genai
 from django.conf import settings
 import json
